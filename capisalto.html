@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CapiSalto — Plataformero Andino</title>
+<style>
+  :root{
+    --cielo-alto:#2b1f4e;
+    --cielo-bajo:#e8743f;
+    --crema:#ffe9c7;
+    --tierra:#7a4a2b;
+    --pasto:#5fae4a;
+    --acento:#ffd23f;
+    --ui:#1a1430;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{
+    background: linear-gradient(180deg, var(--cielo-alto) 0%, #563a6e 55%, var(--cielo-bajo) 100%);
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    font-family:'Courier New', monospace;
+    color:var(--crema);
+    padding:12px;
+  }
+  h1{
+    font-size:clamp(20px,4vw,34px);
+    letter-spacing:4px;
+    text-transform:uppercase;
+    margin-bottom:4px;
+    text-shadow:3px 3px 0 var(--ui);
+  }
+  .sub{
+    font-size:12px;
+    opacity:.85;
+    margin-bottom:10px;
+    letter-spacing:1px;
+  }
+  #marco{
+    position:relative;
+    border:6px solid var(--ui);
+    border-radius:8px;
+    box-shadow:0 10px 40px rgba(0,0,0,.5), inset 0 0 0 2px var(--acento);
+    background:#000;
+    max-width:100%;
+  }
+  canvas{
+    display:block;
+    image-rendering:pixelated;
+    max-width:100%;
+    height:auto;
+  }
+  #overlay{
+    position:absolute;
+    inset:0;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    background:rgba(20,12,40,.82);
+    text-align:center;
+    gap:14px;
+    padding:20px;
+  }
+  #overlay.oculto{display:none;}
+  #overlay h2{
+    font-size:clamp(22px,5vw,40px);
+    letter-spacing:5px;
+    color:var(--acento);
+    text-shadow:3px 3px 0 #000;
+  }
+  #overlay p{font-size:14px;line-height:1.7;max-width:480px;}
+  button{
+    font-family:inherit;
+    font-size:16px;
+    letter-spacing:2px;
+    padding:12px 28px;
+    background:var(--acento);
+    color:var(--ui);
+    border:4px solid var(--ui);
+    border-radius:6px;
+    cursor:pointer;
+    font-weight:bold;
+    box-shadow:0 4px 0 var(--ui);
+    transition:transform .08s, box-shadow .08s;
+  }
+  button:hover{transform:translateY(2px);box-shadow:0 2px 0 var(--ui);}
+  button:focus-visible{outline:3px dashed var(--crema);outline-offset:3px;}
+  .controles{
+    margin-top:10px;
+    font-size:12px;
+    opacity:.8;
+    text-align:center;
+    line-height:1.8;
+    letter-spacing:1px;
+  }
+  kbd{
+    background:var(--ui);
+    border:1px solid var(--acento);
+    border-radius:4px;
+    padding:2px 7px;
+    font-family:inherit;
+  }
+  #touch{
+    display:none;
+    width:100%;
+    max-width:760px;
+    margin-top:12px;
+    justify-content:space-between;
+    gap:10px;
+  }
+  .tbtn{
+    flex:1;
+    font-size:26px;
+    padding:18px 0;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:none;
+  }
+  @media (pointer:coarse){
+    #touch{display:flex;}
+  }
+</style>
+</head>
+<body>
+<h1>🦫 CapiSalto</h1>
+<div class="sub">Un capibara, un valle andino, y un salto que SÍ funciona</div>
+
+<div id="marco">
+  <canvas id="juego" width="760" height="440"></canvas>
+  <div id="overlay">
+    <h2 id="ovTitulo">CapiSalto</h2>
+    <p id="ovTexto">
+      Ayuda a Capi a cruzar el valle, juntar copihues y llegar a la bandera.<br><br>
+      El salto es de <strong>altura completa desde parado</strong>: no necesitas correr para saltar bien.
+      Mantén presionado para saltar más alto, suelta para un salto corto.
+    </p>
+    <button id="btnJugar">▶ JUGAR</button>
+  </div>
+</div>
+
+<div class="controles">
+  <kbd>←</kbd> <kbd>→</kbd> o <kbd>A</kbd> <kbd>D</kbd> moverse &nbsp;·&nbsp;
+  <kbd>Espacio</kbd> / <kbd>↑</kbd> / <kbd>W</kbd> saltar &nbsp;·&nbsp;
+  <kbd>Shift</kbd> correr (opcional, no afecta la altura del salto) &nbsp;·&nbsp;
+  <kbd>R</kbd> reiniciar &nbsp;·&nbsp;
+  <kbd>M</kbd> silenciar
+</div>
+
+<div id="touch">
+  <button class="tbtn" id="tIzq">◀</button>
+  <button class="tbtn" id="tDer">▶</button>
+  <button class="tbtn" id="tSalto">⤒ SALTO</button>
+</div>
+
+<script>
+"use strict";
+/* =========================================================
+   CapiSalto — plataformero original
+   Física de salto diseñada para NO depender del impulso:
+   - Impulso vertical constante (igual parado que corriendo)
+   - Salto variable (soltar corta el salto)
+   - Coyote time (saltar justo después de caer del borde)
+   - Jump buffering (presionar justo antes de aterrizar)
+   ========================================================= */
+
+const canvas = document.getElementById('juego');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const ovTitulo = document.getElementById('ovTitulo');
+const ovTexto = document.getElementById('ovTexto');
+const btnJugar = document.getElementById('btnJugar');
+
+const TILE = 40;
+
+/* ---------- Nivel (mapa de tiles) ----------
+   # suelo/tierra   = pasto sobre tierra   B bloque ladrillo
+   ? bloque sorpresa (copihue)             o copihue suelto
+   E enemigo (piedra rodante)              P inicio del jugador
+   F bandera (meta)                        - vacío
+   ^ púas                                   M plataforma flotante
+*/
+const NIVEL = [
+"--------------------------------------------------------------------------------------------------------",
+"--------------------------------------------------------------------------------------------------------",
+"--------------------------------------------------------------------------------------------------------",
+"-----------------------o-o-o---------------------------------o-o------------------------------------F---",
+"--------------?-------MMMMMMM------------------B?B-----------MMM--------o-o-o---------------------------",
+"--------------------------------------------------------------------------------------------------------",
+"--------o-o---------------------------o-o----------------------------BMMMMMB-------------?--------------",
+"-------MMMM------B?B--------MM-------MMMM-------E------MM--------------------------------MMM----------==-",
+"-P--------------------------------------------=====----------E----------------E---------------------====",
+"=====--====---======---==--======--======--==========--===========--==============--====--^^--==========",
+"=====--====---======---==--======--======--==========--===========--==============--====--^^--==========",
+];
+
+const FILAS = NIVEL.length;
+const COLS = NIVEL[0].length;
+const MUNDO_W = COLS * TILE;
+const MUNDO_H = FILAS * TILE;
+
+/* ---------- Constantes de física (la clave del salto) ---------- */
+const FIS = {
+  gravedad: 2400,          // px/s²
+  gravedadCaida: 3100,     // cae un poco más rápido: se siente ágil
+  velSaltoCompleto: -820,  // ¡CONSTANTE! No depende de la velocidad horizontal
+  velSaltoMinimo: -300,    // al soltar el botón, el salto se corta hasta aquí
+  velMaxCaida: 1100,
+  acelSuelo: 3000,
+  acelAire: 2200,          // buen control en el aire, incluso desde parado
+  friccionSuelo: 2600,
+  velCaminar: 260,
+  velCorrer: 400,          // correr solo afecta lo HORIZONTAL, nunca la altura
+  coyoteTime: 0.12,        // segundos de gracia tras salir de una plataforma
+  jumpBuffer: 0.14,        // segundos de antelación al presionar salto
+};
+
+/* ---------- Estado ---------- */
+let teclas = {};
+let jugador, enemigos, copihues, bloquesSorpresa, particulas, bandera, camX;
+let puntaje, vidas, estado, tiempoInvulnerable, animT;
+
+function reiniciar(){
+  enemigos = [];
+  copihues = [];
+  bloquesSorpresa = {};
+  particulas = [];
+  bandera = null;
+  puntaje = 0;
+  vidas = 3;
+  tiempoInvulnerable = 0;
+  animT = 0;
+  camX = 0;
+  estado = 'jugando';
+
+  for(let f=0; f<FILAS; f++){
+    for(let c=0; c<COLS; c++){
+      const ch = NIVEL[f][c];
+      const x = c*TILE, y = f*TILE;
+      if(ch === 'P'){
+        jugador = crearJugador(x, y - 4);
+      } else if(ch === 'E'){
+        enemigos.push({x, y: y+8, w: 32, h: 32, vx: -70, vivo: true, ang: 0});
+      } else if(ch === 'o'){
+        copihues.push({x: x+8, y: y+8, w: 24, h: 24, tomado: false, fase: Math.random()*6});
+      } else if(ch === 'F'){
+        bandera = {x: x+10, y: y - TILE*4, w: 8, h: TILE*5};
+      }
+    }
+  }
+}
+
+function crearJugador(x, y){
+  return {
+    x, y, w: 30, h: 34,
+    vx: 0, vy: 0,
+    enSuelo: false,
+    mirando: 1,
+    coyote: 0,
+    buffer: 0,
+    saltando: false,   // true mientras el salto está "vivo" (para el corte variable)
+  };
+}
+
+/* ---------- Utilidades de tiles ---------- */
+function tileEn(px, py){
+  const c = Math.floor(px / TILE), f = Math.floor(py / TILE);
+  if(c < 0 || c >= COLS) return '=';   // bordes del mundo = sólido
+  if(f < 0) return '-';
+  if(f >= FILAS) return '-';
+  const ch = NIVEL[f][c];
+  return ch;
+}
+function esSolido(ch, c, f){
+  if(ch === '=' || ch === 'M' || ch === 'B') return true;
+  if(ch === '?'){
+    return !(bloquesSorpresa[f+','+c] && bloquesSorpresa[f+','+c].usado === 'roto');
+  }
+  return false;
+}
+function solidoEn(px, py){
+  const c = Math.floor(px / TILE), f = Math.floor(py / TILE);
+  const ch = tileEn(px, py);
+  return esSolido(ch, c, f);
+}
+
+/* ---------- Audio (Web Audio API, todo sintetizado) ---------- */
+const AUDIO = {
+  ctx: null,
+  ganancia: null,
+  gananciaMusica: null,
+  silenciado: false,
+  musicaTimer: null,
+
+  iniciar(){
+    if(this.ctx) { if(this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    this.ctx = new AC();
+    this.ganancia = this.ctx.createGain();
+    this.ganancia.gain.value = 0.5;
+    this.ganancia.connect(this.ctx.destination);
+    this.gananciaMusica = this.ctx.createGain();
+    this.gananciaMusica.gain.value = 0.16;
+    this.gananciaMusica.connect(this.ganancia);
+  },
+
+  // Tono básico: onda, frecuencia inicial/final, duración, volumen
+  tono(tipo, f0, f1, dur, vol = 0.3, retraso = 0){
+    if(!this.ctx || this.silenciado) return;
+    const t = this.ctx.currentTime + retraso;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = tipo;
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(g);
+    g.connect(this.ganancia);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+  },
+
+  ruido(dur, vol = 0.25){
+    if(!this.ctx || this.silenciado) return;
+    const t = this.ctx.currentTime;
+    const n = Math.floor(this.ctx.sampleRate * dur);
+    const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+    const datos = buf.getChannelData(0);
+    for(let i=0;i<n;i++) datos[i] = (Math.random()*2-1) * (1 - i/n);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.value = vol;
+    const filtro = this.ctx.createBiquadFilter();
+    filtro.type = 'lowpass';
+    filtro.frequency.value = 900;
+    src.connect(filtro); filtro.connect(g); g.connect(this.ganancia);
+    src.start(t);
+  },
+
+  /* --- Efectos --- */
+  salto(){   this.tono('square', 320, 760, 0.18, 0.22); },
+  copihue(){ this.tono('square', 988, 988, 0.07, 0.22);
+             this.tono('square', 1319, 1319, 0.16, 0.22, 0.07); },
+  pisoton(){ this.ruido(0.18, 0.3); this.tono('triangle', 220, 70, 0.18, 0.3); },
+  bloque(){  this.tono('square', 660, 660, 0.06, 0.2);
+             this.tono('square', 880, 880, 0.10, 0.2, 0.06); },
+  dano(){    this.tono('sawtooth', 300, 90, 0.35, 0.3); },
+  victoria(){
+    const notas = [523, 659, 784, 1047, 784, 1047];
+    notas.forEach((f,i) => this.tono('square', f, f, 0.16, 0.25, i*0.13));
+  },
+  gameOver(){
+    const notas = [392, 330, 262, 196];
+    notas.forEach((f,i) => this.tono('triangle', f, f, 0.3, 0.3, i*0.25));
+  },
+
+  /* --- Música de fondo: melodía original en bucle --- */
+  notaMusica(f, dur, t, tipo = 'square', vol = 1){
+    if(!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = tipo;
+    osc.frequency.value = f;
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.02);
+    g.gain.setValueAtTime(vol, t + dur*0.7);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(g);
+    g.connect(this.gananciaMusica);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  },
+
+  empezarMusica(){
+    if(!this.ctx) return;
+    this.pararMusica();
+    const neg = 0.32; // duración de una negra (≈ 187 bpm corchea alegre)
+    // Melodía original pentatónica con aire andino (La menor pent.)
+    const A=440, C=523.25, D=587.33, E=659.25, G=783.99, A2=880, G2=392, E2=329.63;
+    const melodia = [
+      [A,1],[C,1],[D,1],[E,2],[D,1],[C,1],[A,1],
+      [G2,1],[A,1],[C,1],[E,2],[D,2],
+      [A,1],[C,1],[D,1],[E,1],[G,1],[A2,2],[G,1],
+      [E,1],[D,1],[C,1],[A,2],[0,2],
+    ];
+    const bajo = [
+      [220,2],[164.81,2],[196,2],[220,2],
+      [220,2],[164.81,2],[196,2],[110,2],
+    ];
+    const programar = () => {
+      if(this.silenciado || !this.ctx) return;
+      let t = this.ctx.currentTime + 0.05;
+      const t0 = t;
+      for(const [f,d] of melodia){
+        if(f > 0) this.notaMusica(f, neg*d*0.9, t, 'square', 0.5);
+        t += neg*d;
+      }
+      let tb = t0;
+      for(const [f,d] of bajo){
+        this.notaMusica(f, neg*d*2*0.85, tb, 'triangle', 0.8);
+        tb += neg*d*2;
+      }
+      const durTotal = (t - t0) * 1000;
+      this.musicaTimer = setTimeout(programar, durTotal - 60);
+    };
+    programar();
+  },
+
+  pararMusica(){
+    if(this.musicaTimer){ clearTimeout(this.musicaTimer); this.musicaTimer = null; }
+  },
+
+  alternarSilencio(){
+    this.silenciado = !this.silenciado;
+    if(this.ganancia) this.ganancia.gain.value = this.silenciado ? 0 : 0.5;
+    if(this.silenciado) this.pararMusica();
+    else if(estado === 'jugando') this.empezarMusica();
+  }
+};
+
+/* ---------- Entrada ---------- */
+addEventListener('keydown', e => {
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+  const k = e.key.toLowerCase();
+  if(!teclas[k] && (k === ' ' || k === 'arrowup' || k === 'w')){
+    presionarSalto();
+  }
+  teclas[k] = true;
+  if(k === 'r' && estado !== 'menu'){
+    reiniciar();
+    AUDIO.iniciar();
+    if(!AUDIO.silenciado) AUDIO.empezarMusica();
+  }
+  if(k === 'm') AUDIO.alternarSilencio();
+});
+addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  teclas[k] = false;
+  if(k === ' ' || k === 'arrowup' || k === 'w') soltarSalto();
+});
+
+function presionarSalto(){
+  if(jugador) jugador.buffer = FIS.jumpBuffer;
+}
+function soltarSalto(){
+  if(!jugador) return;
+  // Salto variable: si vamos subiendo y soltamos, se corta la subida.
+  if(jugador.saltando && jugador.vy < FIS.velSaltoMinimo){
+    jugador.vy = FIS.velSaltoMinimo;
+  }
+  jugador.saltando = false;
+}
+
+/* Controles táctiles */
+function bindTouch(id, down, up){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); down(); });
+  el.addEventListener('pointerup',   e => { e.preventDefault(); up(); });
+  el.addEventListener('pointerleave',e => up());
+}
+bindTouch('tIzq',  () => teclas['arrowleft'] = true,  () => teclas['arrowleft'] = false);
+bindTouch('tDer',  () => teclas['arrowright'] = true, () => teclas['arrowright'] = false);
+bindTouch('tSalto',() => { teclas[' '] = true; presionarSalto(); }, () => { teclas[' '] = false; soltarSalto(); });
+
+/* ---------- Lógica del jugador ---------- */
+function actualizarJugador(dt){
+  const p = jugador;
+  const izq = teclas['arrowleft'] || teclas['a'];
+  const der = teclas['arrowright'] || teclas['d'];
+  const correr = teclas['shift'];
+  const velMax = correr ? FIS.velCorrer : FIS.velCaminar;
+
+  // --- Horizontal ---
+  const acel = p.enSuelo ? FIS.acelSuelo : FIS.acelAire;
+  if(der && !izq){
+    p.vx = Math.min(p.vx + acel*dt, velMax);
+    p.mirando = 1;
+  } else if(izq && !der){
+    p.vx = Math.max(p.vx - acel*dt, -velMax);
+    p.mirando = -1;
+  } else if(p.enSuelo){
+    // fricción
+    if(p.vx > 0) p.vx = Math.max(0, p.vx - FIS.friccionSuelo*dt);
+    else if(p.vx < 0) p.vx = Math.min(0, p.vx + FIS.friccionSuelo*dt);
+  }
+
+  // --- Temporizadores de salto ---
+  p.coyote = p.enSuelo ? FIS.coyoteTime : Math.max(0, p.coyote - dt);
+  p.buffer = Math.max(0, p.buffer - dt);
+
+  // --- EL SALTO ---
+  // Impulso vertical SIEMPRE igual: no se suma nada de la velocidad horizontal.
+  // Puedes saltar a altura completa estando totalmente quieto.
+  if(p.buffer > 0 && p.coyote > 0){
+    p.vy = FIS.velSaltoCompleto;
+    p.saltando = true;
+    p.buffer = 0;
+    p.coyote = 0;
+    p.enSuelo = false;
+    soltarParticulas(p.x + p.w/2, p.y + p.h, 6, '#d8c39a');
+    AUDIO.salto();
+  }
+
+  // --- Gravedad ---
+  const g = (p.vy > 0 || !p.saltando) ? FIS.gravedadCaida : FIS.gravedad;
+  p.vy = Math.min(p.vy + g*dt, FIS.velMaxCaida);
+
+  // --- Movimiento + colisiones eje por eje ---
+  moverConColisiones(p, dt, true);
+
+  // --- Púas / caída al vacío ---
+  const tileAbajo = tileEn(p.x + p.w/2, p.y + p.h - 2);
+  if(tileAbajo === '^' || p.y > MUNDO_H + 100){
+    perderVida(true);
+  }
+
+  // --- Copihues ---
+  for(const c of copihues){
+    if(!c.tomado && choca(p, c)){
+      c.tomado = true;
+      puntaje += 100;
+      soltarParticulas(c.x + c.w/2, c.y + c.h/2, 8, '#ff5a7a');
+      AUDIO.copihue();
+    }
+  }
+
+  // --- Enemigos ---
+  for(const e of enemigos){
+    if(!e.vivo) continue;
+    if(choca(p, e)){
+      const pisando = p.vy > 100 && (p.y + p.h - e.y) < 20;
+      if(pisando){
+        e.vivo = false;
+        puntaje += 200;
+        p.vy = FIS.velSaltoCompleto * 0.55; // rebote al pisar
+        soltarParticulas(e.x + e.w/2, e.y + e.h/2, 10, '#9a8c7a');
+        AUDIO.pisoton();
+      } else if(tiempoInvulnerable <= 0){
+        perderVida(false);
+        p.vy = -400;
+        p.vx = 300 * (p.x < e.x ? -1 : 1);
+      }
+    }
+  }
+
+  // --- Bandera ---
+  if(bandera && choca(p, bandera)){
+    estado = 'ganaste';
+    AUDIO.pararMusica();
+    AUDIO.victoria();
+    mostrarOverlay('¡GANASTE! 🏆', `Cruzaste el valle con ${puntaje} puntos.<br>Capi está orgulloso de ti.`, '↻ JUGAR DE NUEVO');
+  }
+
+  if(tiempoInvulnerable > 0) tiempoInvulnerable -= dt;
+}
+
+function moverConColisiones(ent, dt, esJugador){
+  // Eje X
+  ent.x += ent.vx * dt;
+  if(ent.vx > 0){
+    if(solidoEn(ent.x + ent.w, ent.y + 2) || solidoEn(ent.x + ent.w, ent.y + ent.h - 2)){
+      ent.x = Math.floor((ent.x + ent.w) / TILE) * TILE - ent.w - 0.01;
+      ent.vx = esJugador ? 0 : -ent.vx;
+    }
+  } else if(ent.vx < 0){
+    if(solidoEn(ent.x, ent.y + 2) || solidoEn(ent.x, ent.y + ent.h - 2)){
+      ent.x = (Math.floor(ent.x / TILE) + 1) * TILE + 0.01;
+      ent.vx = esJugador ? 0 : -ent.vx;
+    }
+  }
+
+  // Eje Y
+  ent.y += ent.vy * dt;
+  if(esJugador) ent.enSuelo = false;
+  if(ent.vy > 0){
+    if(solidoEn(ent.x + 4, ent.y + ent.h) || solidoEn(ent.x + ent.w - 4, ent.y + ent.h)){
+      ent.y = Math.floor((ent.y + ent.h) / TILE) * TILE - ent.h - 0.01;
+      ent.vy = 0;
+      if(esJugador){ ent.enSuelo = true; ent.saltando = false; }
+    }
+  } else if(ent.vy < 0){
+    if(solidoEn(ent.x + 4, ent.y) || solidoEn(ent.x + ent.w - 4, ent.y)){
+      const f = Math.floor(ent.y / TILE);
+      ent.y = (f + 1) * TILE + 0.01;
+      ent.vy = 0;
+      ent.saltando = false;
+      if(esJugador) golpearBloque(ent, f);
+    }
+  }
+}
+
+function golpearBloque(p, f){
+  // ¿Golpeó un bloque sorpresa con la cabeza?
+  for(const offset of [4, p.w - 4]){
+    const c = Math.floor((p.x + offset) / TILE);
+    const key = f + ',' + c;
+    if(tileEn(c*TILE + 1, f*TILE + 1) === '?' && !bloquesSorpresa[key]){
+      bloquesSorpresa[key] = {usado: 'abierto'};
+      puntaje += 100;
+      AUDIO.bloque();
+      soltarParticulas(c*TILE + TILE/2, f*TILE - 6, 10, '#ff5a7a');
+      copihues.push({x: c*TILE + 8, y: f*TILE - TILE + 6, w: 24, h: 24, tomado: false, fase: 0, brote: 0.6});
+      return;
+    }
+  }
+}
+
+function perderVida(reaparece){
+  if(tiempoInvulnerable > 0 && !reaparece) return;
+  vidas--;
+  tiempoInvulnerable = 1.5;
+  soltarParticulas(jugador.x + jugador.w/2, jugador.y + jugador.h/2, 12, '#ff5a7a');
+  AUDIO.dano();
+  if(vidas <= 0){
+    estado = 'perdiste';
+    AUDIO.pararMusica();
+    AUDIO.gameOver();
+    mostrarOverlay('GAME OVER', `Conseguiste ${puntaje} puntos.<br>El valle te espera para otro intento.`, '↻ REINTENTAR');
+    return;
+  }
+  if(reaparece){
+    jugador.x = Math.max(40, camX + 60);
+    jugador.y = 40;
+    jugador.vx = 0;
+    jugador.vy = 0;
+  }
+}
+
+/* ---------- Enemigos ---------- */
+function actualizarEnemigos(dt){
+  for(const e of enemigos){
+    if(!e.vivo) continue;
+    e.vy = (e.vy || 0) + FIS.gravedad * dt;
+    e.vy = Math.min(e.vy, FIS.velMaxCaida);
+
+    // dar la vuelta en bordes de plataforma
+    const adelanteX = e.vx > 0 ? e.x + e.w + 2 : e.x - 2;
+    if(!solidoEn(adelanteX, e.y + e.h + 4) && solidoEn(e.x + e.w/2, e.y + e.h + 4)){
+      e.vx = -e.vx;
+    }
+    moverConColisiones(e, dt, false);
+    e.ang += e.vx * dt * 0.05;
+    if(e.y > MUNDO_H + 100) e.vivo = false;
+  }
+}
+
+/* ---------- Partículas ---------- */
+function soltarParticulas(x, y, n, color){
+  for(let i=0;i<n;i++){
+    particulas.push({
+      x, y,
+      vx: (Math.random()-0.5)*300,
+      vy: -Math.random()*300,
+      vida: 0.5 + Math.random()*0.3,
+      color
+    });
+  }
+}
+function actualizarParticulas(dt){
+  for(const p of particulas){
+    p.vida -= dt;
+    p.x += p.vx*dt;
+    p.y += p.vy*dt;
+    p.vy += 1500*dt;
+  }
+  particulas = particulas.filter(p => p.vida > 0);
+}
+
+function choca(a, b){
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/* ---------- Dibujo ---------- */
+function dibujar(){
+  const W = canvas.width, H = canvas.height;
+
+  // cielo atardecer andino
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#2b1f4e');
+  grad.addColorStop(0.55,'#6e3f6e');
+  grad.addColorStop(1,'#e8743f');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,W,H);
+
+  // cordillera parallax
+  dibujarMontanas(0.2, H*0.72, '#3a2a55', 130);
+  dibujarMontanas(0.4, H*0.80, '#553a66', 90);
+
+  ctx.save();
+  ctx.translate(-Math.floor(camX), 0);
+
+  // tiles
+  const c0 = Math.max(0, Math.floor(camX/TILE));
+  const c1 = Math.min(COLS-1, Math.ceil((camX+W)/TILE));
+  for(let f=0; f<FILAS; f++){
+    for(let c=c0; c<=c1; c++){
+      dibujarTile(NIVEL[f][c], c, f);
+    }
+  }
+
+  // copihues (flores coleccionables)
+  for(const cp of copihues){
+    if(cp.tomado) continue;
+    if(cp.brote !== undefined && cp.brote > 0){ cp.brote -= 0.02; }
+    cp.fase += 0.05;
+    const oy = Math.sin(cp.fase)*3;
+    dibujarCopihue(cp.x + cp.w/2, cp.y + cp.h/2 + oy);
+  }
+
+  // bandera
+  if(bandera){
+    ctx.fillStyle = '#d8c39a';
+    ctx.fillRect(bandera.x, bandera.y, 6, bandera.h);
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath();
+    ctx.moveTo(bandera.x+6, bandera.y+6);
+    ctx.lineTo(bandera.x+50, bandera.y+20);
+    ctx.lineTo(bandera.x+6, bandera.y+34);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // enemigos (piedras rodantes)
+  for(const e of enemigos){
+    if(!e.vivo) continue;
+    ctx.save();
+    ctx.translate(e.x+e.w/2, e.y+e.h/2);
+    ctx.rotate(e.ang);
+    ctx.fillStyle = '#8a7a68';
+    ctx.beginPath();
+    ctx.arc(0,0,e.w/2,0,Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#6e604f';
+    ctx.fillRect(-10,-4,8,8);
+    ctx.fillRect(4,2,7,7);
+    ctx.restore();
+    // ojitos enojados
+    ctx.fillStyle = '#1a1430';
+    const dir = e.vx > 0 ? 1 : -1;
+    ctx.fillRect(e.x + e.w/2 + dir*4 - 2, e.y + 8, 4, 6);
+    ctx.fillRect(e.x + e.w/2 + dir*12 - 2, e.y + 8, 4, 6);
+  }
+
+  // jugador (Capi el capibara)
+  if(estado === 'jugando' || estado === 'ganaste'){
+    const parpadeo = tiempoInvulnerable > 0 && Math.floor(animT*12)%2 === 0;
+    if(!parpadeo) dibujarCapi(jugador);
+  }
+
+  // partículas
+  for(const p of particulas){
+    ctx.globalAlpha = Math.max(0, p.vida*2);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-3, p.y-3, 6, 6);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+
+  // HUD
+  ctx.fillStyle = 'rgba(26,20,48,.75)';
+  ctx.fillRect(10,10,250,38);
+  ctx.fillStyle = '#ffe9c7';
+  ctx.font = 'bold 16px "Courier New", monospace';
+  ctx.fillText('PUNTOS ' + String(puntaje).padStart(5,'0'), 22, 35);
+  ctx.fillStyle = '#ff5a7a';
+  ctx.fillText('♥'.repeat(Math.max(0,vidas)), 195, 35);
+}
+
+function dibujarMontanas(par, base, color, alto){
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height);
+  const off = camX * par;
+  for(let x=-100; x<=canvas.width+100; x+=10){
+    const wx = x + off;
+    const y = base
+      - Math.abs(Math.sin(wx*0.004))*alto
+      - Math.abs(Math.sin(wx*0.013+2))*alto*0.35;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(canvas.width, canvas.height);
+  ctx.closePath();
+  ctx.fill();
+  // nieve en las cumbres
+  ctx.fillStyle = 'rgba(255,240,230,.25)';
+  for(let x=-100; x<=canvas.width+100; x+=10){
+    const wx = x + off;
+    const y = base
+      - Math.abs(Math.sin(wx*0.004))*alto
+      - Math.abs(Math.sin(wx*0.013+2))*alto*0.35;
+    if(y < base - alto*0.85) ctx.fillRect(x, y, 8, 5);
+  }
+}
+
+function dibujarTile(ch, c, f){
+  const x = c*TILE, y = f*TILE;
+  if(ch === '='){
+    // ¿hay pasto encima? (si arriba no es sólido)
+    const arriba = f > 0 ? NIVEL[f-1][c] : '-';
+    ctx.fillStyle = '#7a4a2b';
+    ctx.fillRect(x, y, TILE, TILE);
+    ctx.fillStyle = '#684026';
+    ctx.fillRect(x+4, y+10, 10, 8);
+    ctx.fillRect(x+22, y+24, 12, 8);
+    if(arriba !== '=' && arriba !== 'M'){
+      ctx.fillStyle = '#5fae4a';
+      ctx.fillRect(x, y, TILE, 10);
+      ctx.fillStyle = '#7ccf5f';
+      ctx.fillRect(x, y, TILE, 4);
+    }
+  } else if(ch === 'M'){
+    ctx.fillStyle = '#9c6b3c';
+    ctx.fillRect(x, y+6, TILE, TILE-12);
+    ctx.fillStyle = '#5fae4a';
+    ctx.fillRect(x, y, TILE, 10);
+    ctx.fillStyle = '#7ccf5f';
+    ctx.fillRect(x, y, TILE, 4);
+  } else if(ch === 'B'){
+    ctx.fillStyle = '#b5653a';
+    ctx.fillRect(x+1, y+1, TILE-2, TILE-2);
+    ctx.strokeStyle = '#7a3f22';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x+2, y+2, TILE-4, TILE-4);
+    ctx.beginPath();
+    ctx.moveTo(x+2, y+TILE/2); ctx.lineTo(x+TILE-2, y+TILE/2);
+    ctx.moveTo(x+TILE/2, y+2); ctx.lineTo(x+TILE/2, y+TILE/2);
+    ctx.stroke();
+  } else if(ch === '?'){
+    const key = f+','+c;
+    const usado = bloquesSorpresa[key];
+    ctx.fillStyle = usado ? '#8a7a68' : '#ffd23f';
+    ctx.fillRect(x+1, y+1, TILE-2, TILE-2);
+    ctx.strokeStyle = usado ? '#6e604f' : '#b8860b';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x+3, y+3, TILE-6, TILE-6);
+    if(!usado){
+      ctx.fillStyle = '#7a3f22';
+      ctx.font = 'bold 24px "Courier New", monospace';
+      ctx.fillText('?', x+13, y+29);
+    }
+  } else if(ch === '^'){
+    ctx.fillStyle = '#c9c2b8';
+    for(let i=0;i<4;i++){
+      ctx.beginPath();
+      ctx.moveTo(x + i*10, y+TILE);
+      ctx.lineTo(x + i*10 + 5, y+TILE-18);
+      ctx.lineTo(x + i*10 + 10, y+TILE);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
+function dibujarCopihue(cx, cy){
+  // flor nacional de Chile, versión pixel
+  ctx.fillStyle = '#3f8a3a';
+  ctx.fillRect(cx-1, cy-14, 2, 8);
+  ctx.fillStyle = '#e8284f';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy-6);
+  ctx.lineTo(cx-8, cy+4);
+  ctx.lineTo(cx-4, cy+10);
+  ctx.lineTo(cx, cy+6);
+  ctx.lineTo(cx+4, cy+10);
+  ctx.lineTo(cx+8, cy+4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#ffb3c2';
+  ctx.fillRect(cx-2, cy+4, 4, 5);
+}
+
+function dibujarCapi(p){
+  const x = p.x, y = p.y, d = p.mirando;
+  const corriendo = Math.abs(p.vx) > 30 && p.enSuelo;
+  const paso = corriendo ? Math.sin(animT*16)*3 : 0;
+
+  ctx.save();
+  ctx.translate(x + p.w/2, y + p.h/2);
+  ctx.scale(d, 1);
+  ctx.translate(-p.w/2, -p.h/2);
+
+  // estirar un poco al saltar/caer (squash & stretch)
+  let sy = 1, sx = 1;
+  if(!p.enSuelo){
+    sy = p.vy < 0 ? 1.12 : 0.94;
+    sx = 2 - sy;
+  }
+  ctx.translate(p.w/2, p.h);
+  ctx.scale(sx, sy);
+  ctx.translate(-p.w/2, -p.h);
+
+  // patas
+  ctx.fillStyle = '#8a5a30';
+  ctx.fillRect(4, p.h-7+paso, 8, 7);
+  ctx.fillRect(p.w-12, p.h-7-paso, 8, 7);
+  // cuerpo
+  ctx.fillStyle = '#b07b42';
+  ctx.fillRect(0, 8, p.w, p.h-14);
+  ctx.fillStyle = '#c9945a';
+  ctx.fillRect(0, 8, p.w, 8);
+  // cabeza
+  ctx.fillStyle = '#b07b42';
+  ctx.fillRect(p.w-22, 0, 22, 18);
+  // hocico
+  ctx.fillStyle = '#8a5a30';
+  ctx.fillRect(p.w-6, 6, 6, 9);
+  // nariz
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(p.w-4, 8, 3, 3);
+  // ojo
+  ctx.fillStyle = '#1a1430';
+  ctx.fillRect(p.w-15, 5, 4, 5);
+  // oreja
+  ctx.fillStyle = '#8a5a30';
+  ctx.fillRect(p.w-21, -3, 6, 6);
+
+  ctx.restore();
+}
+
+/* ---------- Overlay ---------- */
+function mostrarOverlay(titulo, html, textoBoton){
+  ovTitulo.textContent = titulo;
+  ovTexto.innerHTML = html;
+  btnJugar.textContent = textoBoton;
+  overlay.classList.remove('oculto');
+}
+btnJugar.addEventListener('click', () => {
+  overlay.classList.add('oculto');
+  AUDIO.iniciar();
+  reiniciar();
+  AUDIO.empezarMusica();
+  canvas.focus();
+});
+
+/* ---------- Bucle principal ---------- */
+let tPrev = performance.now();
+function bucle(t){
+  let dt = (t - tPrev) / 1000;
+  tPrev = t;
+  dt = Math.min(dt, 1/30); // evita saltos de física si la pestaña se pausa
+
+  if(estado === 'jugando'){
+    animT += dt;
+    actualizarJugador(dt);
+    actualizarEnemigos(dt);
+    actualizarParticulas(dt);
+    // cámara con un poco de adelanto
+    const objetivo = jugador.x + jugador.w/2 - canvas.width/2 + jugador.mirando*40;
+    camX += (objetivo - camX) * Math.min(1, dt*6);
+    camX = Math.max(0, Math.min(camX, MUNDO_W - canvas.width));
+  }
+  dibujar();
+  requestAnimationFrame(bucle);
+}
+
+estado = 'menu';
+reiniciar();
+estado = 'menu';
+requestAnimationFrame(bucle);
+</script>
+</body>
+</html>
